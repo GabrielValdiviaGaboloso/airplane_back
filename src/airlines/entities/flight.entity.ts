@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, OneToMany } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, ManyToOne, OneToMany, JoinColumn } from 'typeorm';
 import { Airplane } from './airplane.entity';
 import { BoardingPass } from './boarding_pass.entity';
 
@@ -21,10 +21,9 @@ export class Flight {
   @Column({ name: 'landing_airport' })
   landingAirport: string;
 
-  @Column({ name: 'airplane_id' })
-  airplaneId: number;
-
- @ManyToOne(() => Airplane, airplane => airplane.flights)
+  
+ @ManyToOne(() => Airplane, (airplane) => airplane.flights)
+  @JoinColumn({ name: 'airplane_id' })  // Aquí pones el nombre exacto de la columna FK en tu tabla flight
   airplane: Airplane;
 
   @OneToMany(() => BoardingPass, boardingPass => boardingPass.flight)

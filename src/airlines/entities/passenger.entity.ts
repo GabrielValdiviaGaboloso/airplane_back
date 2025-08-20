@@ -1,9 +1,10 @@
-import { Entity, Column, PrimaryGeneratedColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, OneToMany } from 'typeorm';
+import { BoardingPass } from './boarding_pass.entity';
 
 @Entity({ name: 'passenger' })
 export class Passenger {
   @PrimaryGeneratedColumn({ name: 'passenger_id' })
-  passengerId: number;
+  passenger_Id: number;
 
   @Column({ name: 'dni' })
   dni: string;
@@ -16,4 +17,7 @@ export class Passenger {
 
   @Column({ name: 'country' })
   country: string;
+  @OneToMany(() => BoardingPass, boardingPass => boardingPass.flight)
+  boardingPasses: BoardingPass[];
+
 }

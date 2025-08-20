@@ -3,6 +3,7 @@ import { AirlinesModule } from './airlines/airlines.module';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { Flight } from './airlines/entities/flight.entity';
 import { Passenger } from './airlines/entities/passenger.entity';
+import { Airplane, BoardingPass, Purchase, Seat, SeatType } from './airlines/entities';
 
 @Module({
   imports: [TypeOrmModule.forRoot({
@@ -12,7 +13,13 @@ import { Passenger } from './airlines/entities/passenger.entity';
       username: 'postulaciones',
       password: 'post123456',
       database: 'airline',
-      entities: [Flight,Passenger], // agrega aquí todas tus entidades
+      entities: [Flight,
+        Passenger,
+        BoardingPass,
+        Seat,
+        SeatType,
+        Airplane,
+        Purchase,], // agrega aquí todas tus entidades
       synchronize: false, // solo lectura, no queremos modificar DB
       retryAttempts: 5,   // intentos de reconexión
       retryDelay: 3000,   // 3 segundos entre intentos
