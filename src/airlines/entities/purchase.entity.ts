@@ -9,6 +9,6 @@ export class Purchase {
   @Column()
   purchase_date: number;
 
-  @OneToMany(() => BoardingPass, boardingPass => boardingPass.Purchase)
+  @OneToMany(() => BoardingPass, boardingPass => boardingPass.purchase)
   boardingPasses: BoardingPass[];
 }

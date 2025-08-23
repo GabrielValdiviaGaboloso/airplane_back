@@ -68,13 +68,13 @@ export class AirlinesService {
 
   // Boarding Passes
   async findAllBoardingPasses(): Promise<BoardingPass[]> {
-    return this.boardingPassRepo.find({ relations: ['passenger', 'flight'] });
+    return this.boardingPassRepo.find({ relations: ['passenger', 'flight','seat','seatType','purchase'] });
   }
 
   async findOneBoardingPass(id: number): Promise<BoardingPass> {
     const bp = await this.boardingPassRepo.findOne({
       where: { boarding_pass_id: id },
-      relations: ['passenger', 'flight'],
+      relations: ['passenger', 'flight','seat','seatType','purchase'],
     });
     if (!bp) throw new NotFoundException(`Boarding pass ${id} not found`);
     return bp;
