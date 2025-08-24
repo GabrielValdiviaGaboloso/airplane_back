@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, IsNull, Not } from 'typeorm';
+import { Repository, IsNull } from 'typeorm';
 import {
   Flight,
   Passenger,
@@ -10,7 +10,6 @@ import {
   Airplane,
   Purchase
 } from './entities/index'
-
 
 export interface CheckInSimulationResult {
   flight: Flight;
@@ -158,92 +157,95 @@ export class AirlinesService {
   // SIMULACIÓN CHECK-IN CON PRIORIDAD DE PRIMERA CLASE
   // =========================================================================
 
-  
   async simulateCheckIn(flightId: number): Promise<CheckInSimulationResult> {
-    console.log(`=== INICIANDO SIMULACIÓN CHECK-IN PARA VUELO ${flightId} ===`);
+    
 
     // 1. Validar que el vuelo existe
-    const flight = await this.flightRepo.findOne({ where: { flightId } });
-    if (!flight) {
-        throw new NotFoundException(`Vuelo ${flightId} no encontrado`);
-    }
-
-    // 2. Obtener TODOS los boarding passes del vuelo
-    const allBoardingPasses = await this.boardingPassRepo.find({
-        where: { flight: { flightId } },
-        relations: ['passenger', 'purchase', 'seatType', 'flight', 'seat']
+    const flight = await this.flightRepo.findOne({
+      where: { flightId }
     });
 
-    if (allBoardingPasses.length === 0) {
-        throw new NotFoundException(`No hay boarding passes para el vuelo ${flightId}`);
+    if (!flight) {
+      throw new NotFoundException(`Vuelo ${flightId} no encontrado`);
     }
 
-    // 3. Separar los boarding passes en dos grupos: asignados y sin asignar
-    const assignedBoardingPasses = allBoardingPasses.filter(bp => bp.seat !== null);
-    const unassignedBoardingPasses = allBoardingPasses.filter(bp => bp.seat === null);
+    // 2. Obtener boarding passes del vuelo (sin asientos asignados)
+    const boardingPasses = await this.boardingPassRepo.find({
+      where: { 
+        flight: { flightId },
+        seat: IsNull()
+      },
+      relations: [
+        'passenger', 
+        'purchase', 
+        'seatType', 
+        'flight',
+        'seat'
+      ]
+    });
 
-    console.log(`Boarding passes asignados: ${assignedBoardingPasses.length}`);
-    console.log(`Boarding passes sin asignar: ${unassignedBoardingPasses.length}`);
+    if (boardingPasses.length === 0) {
+      throw new NotFoundException(`No hay boarding passes sin asignar para el vuelo ${flightId}`);
+    }
 
-    // 4. Determinar el avión del vuelo
+   
+
+    // 3. Determinar el avión del vuelo
     const airplane = await this.determineAirplaneForFlight(flightId);
 
-    // 5. Obtener asientos disponibles del avión (asumiendo que los que ya están asignados a este vuelo no están disponibles)
-    const occupiedSeatIds = new Set(assignedBoardingPasses.map(bp => bp.seat.seat_id));
+    // 4. Obtener asientos disponibles del avión
     const availableSeats = await this.seatRepo.find({
-        where: { airplane: { airplane_id: airplane.airplane_id } },
-        relations: ['seatType', 'airplane']
+      where: { 
+        airplane: { airplane_id: airplane.airplane_id }
+      },
+      relations: ['seatType', 'airplane']
     });
 
+    // Filtrar asientos que no están ocupados
+    const occupiedSeatIds = await this.getOccupiedSeatIds();
     const freeSeats = availableSeats.filter(seat => !occupiedSeatIds.has(seat.seat_id));
 
-    console.log(`Asientos disponibles en ${airplane.name}: ${freeSeats.length}`);
     
-    // 6. Procesar la asignación de los boarding passes sin asignar
-    const assignmentGroups = this.groupBoardingPassesByPurchaseWithPriority(unassignedBoardingPasses);
-    console.log(`Grupos de compra a procesar: ${assignmentGroups.length}`);
 
-    const newlyAssignedBoardingPasses = await this.processGroupAssignmentsWithPriority(
-        assignmentGroups,
-        freeSeats,
-        airplane
+    // 5. Agrupar boarding passes por compra CON PRIORIDAD
+    const assignmentGroups = this.groupBoardingPassesByPurchaseWithPriority(boardingPasses);
+    
+
+    // 6. Procesar asignación de asientos CON SISTEMA DE PRIORIDAD
+    const processedBoardingPasses = await this.processGroupAssignmentsWithPriority(
+      assignmentGroups, 
+      freeSeats, 
+      airplane
     );
 
-    // 7. Combinar los boarding passes que ya estaban asignados con los recién asignados
-    const allProcessedBoardingPasses = [...assignedBoardingPasses, ...newlyAssignedBoardingPasses];
 
-    // 8. Guardar las nuevas asignaciones en base de datos
-    await this.saveSeatAssignments(newlyAssignedBoardingPasses);
-
-    // 9. Generar resumen mejorado
+    // 8. Generar resumen mejorado
     const assignmentSummary = this.generateEnhancedAssignmentSummary(
-        assignmentGroups,
-        newlyAssignedBoardingPasses
+      assignmentGroups, 
+      processedBoardingPasses
     );
 
-    console.log(`=== SIMULACIÓN COMPLETADA ===`);
+   
 
     return {
-        flight,
-        airplane,
-        assignedBoardingPasses: allProcessedBoardingPasses, // Devolvemos todos los asignados
-        assignmentSummary
+      flight,
+      airplane,
+      assignedBoardingPasses: processedBoardingPasses,
+      assignmentSummary
     };
-}
+  }
 
-// El método getOccupiedSeatIds() también debe ser ajustado
-private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
+  private async getOccupiedSeatIds(): Promise<Set<number>> {
     const occupiedBoardingPasses = await this.boardingPassRepo.find({
-        where: { flight: { flightId }, seat: Not(IsNull()) },
-        relations: ['seat']
+      relations: ['seat']
     });
 
     return new Set(
-        occupiedBoardingPasses
-            .filter(bp => bp.seat && bp.seat.seat_id)
-            .map(bp => bp.seat.seat_id)
+      occupiedBoardingPasses
+        .filter(bp => bp.seat && bp.seat.seat_id)
+        .map(bp => bp.seat.seat_id)
     );
-}
+  }
 
   private async determineAirplaneForFlight(flightId: number): Promise<Airplane> {
     const airplanes = await this.airplaneRepo.find();
@@ -265,20 +267,18 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
       throw new NotFoundException(`No se pudo determinar avión para vuelo ${flightId}`);
     }
 
-    console.log(`Avión asignado: ${airplane.name} (ID: ${airplane.airplane_id})`);
+    
     return airplane;
   }
 
   // NUEVO: Método mejorado que asigna prioridades por clase
   private groupBoardingPassesByPurchaseWithPriority(boardingPasses: BoardingPass[]): SeatAssignmentGroup[] {
-    console.log('Agrupando boarding passes por compra con prioridad...', boardingPasses);
     const groupsMap = new Map<number, SeatAssignmentGroup>();
 
     boardingPasses.forEach(bp => {
       const purchaseId = bp.purchase.purchase_id;
       
       if (!groupsMap.has(purchaseId)) {
-        console.log(`Creando nuevo grupo para compra ${purchaseId} - Tipo de asiento: ${bp.seatType.name}`);
         const seatTypeNormalized = this.normalizeSeatType(bp.seatType.name);
         const priority = this.calculatePriority(seatTypeNormalized, bp.passenger);
         
@@ -320,29 +320,29 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
     switch (seatType) {
       case 'business': // Primera clase y business
         priority = 3000;
-        console.log(`🥇 Prioridad PRIMERA CLASE/BUSINESS: ${passenger.name} - Prioridad base: ${priority}`);
+        
         break;
       case 'economypremium': // Economy premium
         priority = 2000;
-        console.log(`🥈 Prioridad ECONOMY PREMIUM: ${passenger.name} - Prioridad base: ${priority}`);
+        
         break;
       case 'economy': // Economy regular
       default:
         priority = 1000;
-        console.log(`🥉 Prioridad ECONOMY: ${passenger.name} - Prioridad base: ${priority}`);
+        
         break;
     }
     
     // Bonus por edad (adultos mayores tienen prioridad)
     if (passenger.age && passenger.age >= 65) {
       priority += 100;
-      console.log(`👴 Bonus adulto mayor para ${passenger.name}: +100`);
+      
     }
     
     // Los menores tendrán prioridad adicional cuando se procesen grupos familiares
     if (this.isMinor(passenger)) {
       priority += 50;
-      console.log(`👶 Bonus menor para ${passenger.name}: +50`);
+      
     }
     
     return priority;
@@ -374,18 +374,17 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
       return a.boardingPasses.length - b.boardingPasses.length;
     });
 
-    console.log('\n=== ORDEN DE PROCESAMIENTO DE GRUPOS ===');
+    
     sortedGroups.forEach((group, index) => {
       const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
       const familyStatus = group.hasMinors && group.hasAdults ? ' (FAMILIA)' : '';
-      console.log(`${index + 1}. Grupo ${group.purchase.purchase_id}: ${seatTypeDisplay}${familyStatus} - Prioridad: ${group.priority} - ${group.passengers.length} pax`);
+      
     });
-    console.log('==========================================\n');
+    
 
     for (const group of sortedGroups) {
       const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
-      console.log(`\n🎯 Procesando grupo ${group.purchase.purchase_id}: ${seatTypeDisplay} (${group.passengers.length} pasajeros) - Prioridad: ${group.priority}`);
-      
+    
       // Validación: menores deben tener adultos
       if (group.hasMinors && !group.hasAdults) {
         console.warn(`❌ Grupo ${group.purchase.purchase_id} tiene menores sin adultos - SALTADO`);
@@ -413,7 +412,7 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
         }
       });
 
-      console.log(`✅ Grupo ${group.purchase.purchase_id} ${seatTypeDisplay} procesado: ${assignedSeats.length} asientos asignados`);
+      
     }
 
     return processedBoardingPasses;
@@ -440,13 +439,13 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
       if (index < windowSeats.length) {
         assignedSeats.push(windowSeats[index]);
         const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
-        console.log(`👶 Menor ${minor.name} (${seatTypeDisplay}) asignado a ventana ${windowSeats[index].seat_column}${windowSeats[index].seat_row}`);
+        
       } else if (nonWindowSeats.length > 0) {
         const seat = nonWindowSeats.shift();
         if (seat) {
           assignedSeats.push(seat);
           const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
-          console.log(`👶 Menor ${minor.name} (${seatTypeDisplay}) asignado a ${seat.seat_column}${seat.seat_row} (sin ventana)`);
+         
         }
       }
     });
@@ -470,7 +469,7 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
       if (index < remainingSeats.length) {
         assignedSeats.push(remainingSeats[index]);
         const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
-        console.log(`👨 Adulto ${adult.name} (${seatTypeDisplay}) asignado a ${remainingSeats[index].seat_column}${remainingSeats[index].seat_row}`);
+        
       }
     });
 
@@ -541,7 +540,7 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
 
   private normalizeSeatType(seatType: string): string {
     const normalized = seatType.toLowerCase().trim();
- 
+    
     if (normalized.includes('business') || normalized.includes('primera')) {
       return 'business';
     } else if (normalized.includes('premium')) {
@@ -551,20 +550,7 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
     }
   }
 
-  private async saveSeatAssignments(boardingPasses: BoardingPass[]): Promise<void> {
-    // TODO: Uncomment when database UPDATE permissions are granted
-    /*
-    for (const bp of boardingPasses) {
-      if (bp.seat) {
-        await this.boardingPassRepo.update(
-          bp.boarding_pass_id, 
-          { seat: bp.seat }
-        );
-      }
-    }
-    */
-    console.log(`💾 ${boardingPasses.length} asignaciones simuladas (no guardadas en BD debido a permisos)`);
-  }
+  
 
   // NUEVO: Resumen mejorado con desglose por clase
   private generateEnhancedAssignmentSummary(groups: SeatAssignmentGroup[], processedBoardingPasses: BoardingPass[]) {
@@ -581,7 +567,6 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
 
     processedBoardingPasses.forEach(bp => {
       const normalizedSeatType = this.normalizeSeatType(bp.seatType.name);
-     
       switch (normalizedSeatType) {
         case 'business':
           if (bp.seatType.name.toLowerCase().includes('primera')) {
@@ -612,14 +597,7 @@ private async getOccupiedSeatIds(flightId: number): Promise<Set<number>> {
       economyClassProcessed
     };
 
-    // Log del resumen
-    console.log('\n=== RESUMEN DE ASIGNACIÓN ===');
-    console.log(`🥇 Primera Clase: ${summary.firstClassProcessed} pasajeros`);
-    console.log(`🥈 Business/Premium: ${summary.businessClassProcessed} pasajeros`);
-    console.log(`🥉 Economy: ${summary.economyClassProcessed} pasajeros`);
-    console.log(`👨‍👩‍👧‍👦 Menores con adultos: ${summary.minorsWithAdults}`);
-    console.log(`✅ Total asignados: ${summary.assignedSeats}/${summary.totalPassengers}`);
-    console.log('============================\n');
+
 
     return summary;
   }
