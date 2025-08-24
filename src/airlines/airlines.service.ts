@@ -387,7 +387,7 @@ export class AirlinesService {
     
       // Validación: menores deben tener adultos
       if (group.hasMinors && !group.hasAdults) {
-        console.warn(`❌ Grupo ${group.purchase.purchase_id} tiene menores sin adultos - SALTADO`);
+       
         continue;
       }
 
@@ -397,7 +397,7 @@ export class AirlinesService {
       );
 
       if (groupAvailableSeats.length < group.boardingPasses.length) {
-        console.warn(`❌ Insuficientes asientos ${seatTypeDisplay} para grupo ${group.purchase.purchase_id} (necesarios: ${group.boardingPasses.length}, disponibles: ${groupAvailableSeats.length})`);
+      
         continue;
       }
 
