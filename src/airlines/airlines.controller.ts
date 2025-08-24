@@ -1,101 +1,117 @@
-import {
-  Controller,
-  Get,
-  Param,
-  ParseIntPipe
-} from '@nestjs/common';
-import { AirlinesService } from './airlines.service';
-import { Flight } from './entities/flight.entity';
-import { Passenger } from './entities/passenger.entity';
-import { Seat } from './entities/seat.entity';
-import { Airplane } from './entities/airplane.entity';
-import { Purchase } from './entities/purchase.entity';
-import { BoardingPass } from './entities/boarding_pass.entity';
-import { SeatType } from './entities/seat_type.entity';
+import { Controller, Get, Param, NotFoundException, ParseIntPipe } from '@nestjs/common';
+import { AirlinesService, CheckInSimulationResult } from './airlines.service';
 
 @Controller()
 export class AirlinesController {
   constructor(private readonly airlinesService: AirlinesService) {}
 
-  // Flights
+  // =========================================================================
+  // ENDPOINTS EXISTENTES
+  // =========================================================================
+
   @Get('flight')
-  async findAllFlights(): Promise<Flight[]> {
-    return this.airlinesService.findAllFlights();
+  async getAllFlights() {
+    return await this.airlinesService.findAllFlights();
   }
 
   @Get('flight/:id')
-  async findOneFlight(@Param('id', ParseIntPipe) id: number): Promise<Flight> {
-    return this.airlinesService.findOneFlight(id);
+  async getOneFlight(@Param('id', ParseIntPipe) id: number) {
+    return await this.airlinesService.findOneFlight(id);
   }
 
   @Get('flight/:id/passengers')
-  async getPassengers(@Param('id', ParseIntPipe) id: number): Promise<Passenger[]> {
-    return this.airlinesService.getPassengersByFlight(id);
+  async getPassengersByFlight(@Param('id', ParseIntPipe) flightId: number) {
+    return await this.airlinesService.getPassengersByFlight(flightId);
   }
 
-  // Passengers
   @Get('passenger')
-  async findAllPassengers(): Promise<Passenger[]> {
-    return this.airlinesService.findAllPassengers();
+  async getAllPassengers() {
+    return await this.airlinesService.findAllPassengers();
   }
 
   @Get('passenger/:id')
-  async findOnePassenger(@Param('id', ParseIntPipe) id: number): Promise<Passenger> {
-    return this.airlinesService.findOnePassenger(id);
+  async getOnePassenger(@Param('id', ParseIntPipe) id: number) {
+    return await this.airlinesService.findOnePassenger(id);
   }
 
-  // Boarding Passes
   @Get('boarding-pass')
-  async findAllBoardingPasses(): Promise<BoardingPass[]> {
-    return this.airlinesService.findAllBoardingPasses();
+  async getAllBoardingPasses() {
+    return await this.airlinesService.findAllBoardingPasses();
   }
 
   @Get('boarding-pass/:id')
-  async findOneBoardingPass(@Param('id', ParseIntPipe) id: number): Promise<BoardingPass> {
-    return this.airlinesService.findOneBoardingPass(id);
+  async getOneBoardingPass(@Param('id', ParseIntPipe) id: number) {
+    return await this.airlinesService.findOneBoardingPass(id);
   }
 
-  // Seats
   @Get('seat')
-  async findAllSeats(): Promise<Seat[]> {
-    return this.airlinesService.findAllSeats();
+  async getAllSeats() {
+    return await this.airlinesService.findAllSeats();
   }
 
   @Get('seat/:id')
-  async findOneSeat(@Param('id', ParseIntPipe) id: number): Promise<Seat> {
-    return this.airlinesService.findOneSeat(id);
+  async getOneSeat(@Param('id', ParseIntPipe) id: number) {
+    return await this.airlinesService.findOneSeat(id);
   }
 
-  // Seat Types
   @Get('seat-type')
-  async findAllSeatTypes(): Promise<SeatType[]> {
-    return this.airlinesService.findAllSeatTypes();
+  async getAllSeatTypes() {
+    return await this.airlinesService.findAllSeatTypes();
   }
 
   @Get('seat-type/:id')
-  async findOneSeatType(@Param('id', ParseIntPipe) id: number): Promise<SeatType> {
-    return this.airlinesService.findOneSeatType(id);
+  async getOneSeatType(@Param('id', ParseIntPipe) id: number) {
+    return await this.airlinesService.findOneSeatType(id);
   }
 
-  // Airplanes
   @Get('airplane')
-  async findAllAirplanes(): Promise<Airplane[]> {
-    return this.airlinesService.findAllAirplanes();
+  async getAllAirplanes() {
+    return await this.airlinesService.findAllAirplanes();
   }
 
   @Get('airplane/:id')
-  async findOneAirplane(@Param('id', ParseIntPipe) id: number): Promise<Airplane> {
-    return this.airlinesService.findOneAirplane(id);
+  async getOneAirplane(@Param('id', ParseIntPipe) id: number) {
+    return await this.airlinesService.findOneAirplane(id);
   }
 
-  // Purchases
   @Get('purchase')
-  async findAllPurchases(): Promise<Purchase[]> {
-    return this.airlinesService.findAllPurchases();
+  async getAllPurchases() {
+    return await this.airlinesService.findAllPurchases();
   }
 
   @Get('purchase/:id')
-  async findOnePurchase(@Param('id', ParseIntPipe) id: number): Promise<Purchase> {
-    return this.airlinesService.findOnePurchase(id);
+  async getOnePurchase(@Param('id', ParseIntPipe) id: number) {
+    return await this.airlinesService.findOnePurchase(id);
+  }
+
+  // =========================================================================
+  // NUEVO ENDPOINT DE SIMULACIÓN CHECK-IN
+  // =========================================================================
+
+  @Get('flight/:id/check-in-automatic')
+  async getCheckInSimulation(@Param('id', ParseIntPipe) flightId: number) {
+    try {
+      const simulation = await this.airlinesService.simulateCheckIn(flightId);
+      
+      return {
+        success: true,
+        flightId,
+        message: `Simulación de check-in completada para vuelo ${flightId}`,
+        data: simulation,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      
+      throw new NotFoundException({
+        success: false,
+        flightId,
+        message: `Error procesando simulación para vuelo ${flightId}`,
+        error: error.message,
+        timestamp: new Date().toISOString()
+      });
+    }
   }
 }
