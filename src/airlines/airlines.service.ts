@@ -14,7 +14,7 @@ import {
 export interface CheckInSimulationResult {
   flight: Flight;
   airplane: Airplane;
-  assignedBoardingPasses: BoardingPass[];
+  assignedBoardingPasses: BoardingPass[]; // Boarding passes filtrados según el parámetro
   assignmentSummary: {
     totalPassengers: number;
     assignedSeats: number;
@@ -27,6 +27,15 @@ export interface CheckInSimulationResult {
   };
 }
 
+// NUEVO: Enum para tipos de filtro de clase
+export enum SeatClassFilter {
+  ALL = 'ALL',
+  FIRST_CLASS = 'FIRST_CLASS', 
+  BUSINESS_CLASS = 'BUSINESS_CLASS',
+  ECONOMY_PREMIUM = 'ECONOMY_PREMIUM',
+  ECONOMY = 'ECONOMY'
+}
+
 interface SeatAssignmentGroup {
   purchase: Purchase;
   boardingPasses: BoardingPass[];
@@ -34,7 +43,7 @@ interface SeatAssignmentGroup {
   seatType: string;
   hasMinors: boolean;
   hasAdults: boolean;
-  priority: number; // Nueva propiedad para prioridad
+  priority: number;
 }
 
 @Injectable()
@@ -154,12 +163,10 @@ export class AirlinesService {
   }
 
   // =========================================================================
-  // SIMULACIÓN CHECK-IN CON PRIORIDAD DE PRIMERA CLASE
+  // SIMULACIÓN CHECK-IN CON FILTRO CONFIGURABLE POR CLASE
   // =========================================================================
 
-  async simulateCheckIn(flightId: number): Promise<CheckInSimulationResult> {
-    
-
+  async simulateCheckIn(flightId: number, classFilter: SeatClassFilter = SeatClassFilter.ALL): Promise<CheckInSimulationResult> {
     // 1. Validar que el vuelo existe
     const flight = await this.flightRepo.findOne({
       where: { flightId }
@@ -188,8 +195,6 @@ export class AirlinesService {
       throw new NotFoundException(`No hay boarding passes sin asignar para el vuelo ${flightId}`);
     }
 
-   
-
     // 3. Determinar el avión del vuelo
     const airplane = await this.determineAirplaneForFlight(flightId);
 
@@ -205,11 +210,8 @@ export class AirlinesService {
     const occupiedSeatIds = await this.getOccupiedSeatIds();
     const freeSeats = availableSeats.filter(seat => !occupiedSeatIds.has(seat.seat_id));
 
-    
-
     // 5. Agrupar boarding passes por compra CON PRIORIDAD
     const assignmentGroups = this.groupBoardingPassesByPurchaseWithPriority(boardingPasses);
-    
 
     // 6. Procesar asignación de asientos CON SISTEMA DE PRIORIDAD
     const processedBoardingPasses = await this.processGroupAssignmentsWithPriority(
@@ -218,21 +220,109 @@ export class AirlinesService {
       airplane
     );
 
+    // 7. NUEVO: Obtener boarding passes ya asignados según el filtro
+    const alreadyAssignedFiltered = await this.getAlreadyAssignedBoardingPassesByClass(flightId, classFilter);
+    
 
-    // 8. Generar resumen mejorado
+    // 8. NUEVO: Filtrar boarding passes recién asignados según el filtro
+    const newlyAssignedFiltered = this.filterBoardingPassesByClass(processedBoardingPasses, classFilter);
+    
+
+    // Combinar boarding passes ya asignados con los recién asignados (según filtro)
+    const allFilteredBoardingPasses = [
+      ...alreadyAssignedFiltered,
+      ...newlyAssignedFiltered
+    ];
+    
+
+    // 9. Generar resumen mejorado
     const assignmentSummary = this.generateEnhancedAssignmentSummary(
       assignmentGroups, 
       processedBoardingPasses
     );
 
-   
-
     return {
       flight,
       airplane,
-      assignedBoardingPasses: processedBoardingPasses,
+      assignedBoardingPasses: allFilteredBoardingPasses, // Filtrados según parámetro
       assignmentSummary
     };
+  }
+
+  // NUEVO: Método para obtener boarding passes ya asignados según clase
+  private async getAlreadyAssignedBoardingPassesByClass(flightId: number, classFilter: SeatClassFilter): Promise<BoardingPass[]> {
+    // Obtener todos los boarding passes del vuelo que YA TIENEN asiento asignado
+    const assignedBoardingPasses = await this.boardingPassRepo.find({
+      where: { 
+        flight: { flightId }
+      },
+      relations: [
+        'passenger', 
+        'purchase', 
+        'seatType', 
+        'flight',
+        'seat'
+      ]
+    });
+
+    // Filtrar solo los que tienen asiento asignado Y coinciden con el filtro de clase
+    const withSeats = assignedBoardingPasses.filter(bp => 
+      bp.seat && bp.seat.seat_id
+    );
+
+    return this.filterBoardingPassesByClass(withSeats, classFilter);
+  }
+
+  // NUEVO: Método para filtrar boarding passes por clase
+  private filterBoardingPassesByClass(boardingPasses: BoardingPass[], classFilter: SeatClassFilter): BoardingPass[] {
+    if (classFilter === SeatClassFilter.ALL) {
+      return boardingPasses;
+    }
+
+    return boardingPasses.filter(bp => {
+      const seatClass = this.getSeatClass(bp.seatType.name);
+      return seatClass === classFilter;
+    });
+  }
+
+  // NUEVO: Método mejorado para clasificar tipos de asiento
+  private getSeatClass(seatType: string): SeatClassFilter {
+    const normalized = seatType.toLowerCase().trim();
+    
+   
+    
+    // Primera clase / Business
+    if (normalized.includes('primera') || 
+        normalized.includes('first') || 
+        normalized.includes('ejecutiva') ||
+        normalized.includes('clase ejecutiva') ||
+        (normalized.includes('business') && !normalized.includes('premium'))) {
+      
+      return SeatClassFilter.FIRST_CLASS;
+    }
+    
+    // Economy Premium
+    if (normalized.includes('premium') || 
+        normalized.includes('plus') ||
+        normalized.includes('comfort')) {
+      return SeatClassFilter.ECONOMY_PREMIUM;
+    }
+    
+    // Economy regular
+    if (normalized.includes('economy') || 
+        normalized.includes('economica') ||
+        normalized.includes('turista') ||
+        normalized.includes('coach')) {
+      return SeatClassFilter.ECONOMY;
+    }
+    
+    // Default a economy si no se puede clasificar
+    return SeatClassFilter.ECONOMY;
+  }
+
+  // MANTENIDO: Método legacy para compatibilidad
+  private isFirstClass(seatType: string): boolean {
+    return this.getSeatClass(seatType) === SeatClassFilter.FIRST_CLASS;
   }
 
   private async getOccupiedSeatIds(): Promise<Set<number>> {
@@ -267,11 +357,9 @@ export class AirlinesService {
       throw new NotFoundException(`No se pudo determinar avión para vuelo ${flightId}`);
     }
 
-    
     return airplane;
   }
 
-  // NUEVO: Método mejorado que asigna prioridades por clase
   private groupBoardingPassesByPurchaseWithPriority(boardingPasses: BoardingPass[]): SeatAssignmentGroup[] {
     const groupsMap = new Map<number, SeatAssignmentGroup>();
 
@@ -303,52 +391,41 @@ export class AirlinesService {
         group.hasAdults = true;
       }
 
-      // Recalcular prioridad si hay menores (aumenta la prioridad)
       if (group.hasMinors && group.hasAdults) {
-        group.priority += 1000; // Boost considerable para familias con menores
+        group.priority += 1000;
       }
     });
 
     return Array.from(groupsMap.values());
   }
 
-  // NUEVO: Sistema de prioridades
   private calculatePriority(seatType: string, passenger: Passenger): number {
     let priority = 0;
     
-    // Prioridad por clase de asiento (mayor número = mayor prioridad)
     switch (seatType) {
-      case 'business': // Primera clase y business
+      case 'business':
         priority = 3000;
-        
         break;
-      case 'economypremium': // Economy premium
+      case 'economypremium':
         priority = 2000;
-        
         break;
-      case 'economy': // Economy regular
+      case 'economy':
       default:
         priority = 1000;
-        
         break;
     }
     
-    // Bonus por edad (adultos mayores tienen prioridad)
     if (passenger.age && passenger.age >= 65) {
       priority += 100;
-      
     }
     
-    // Los menores tendrán prioridad adicional cuando se procesen grupos familiares
     if (this.isMinor(passenger)) {
       priority += 50;
-      
     }
     
     return priority;
   }
 
-  // NUEVO: Procesamiento con sistema de prioridad
   private async processGroupAssignmentsWithPriority(
     groups: SeatAssignmentGroup[], 
     availableSeats: Seat[], 
@@ -357,37 +434,15 @@ export class AirlinesService {
     const processedBoardingPasses: BoardingPass[] = [];
     const occupiedSeatIds = new Set<number>();
 
-    // ORDENAMIENTO MEJORADO CON PRIORIDADES:
-    // 1. Primera clase/Business con menores y adultos
-    // 2. Primera clase/Business sin menores
-    // 3. Premium con menores y adultos  
-    // 4. Premium sin menores
-    // 5. Economy con menores y adultos
-    // 6. Economy sin menores
     const sortedGroups = groups.sort((a, b) => {
-      // Primero por prioridad total (descendente)
       if (b.priority !== a.priority) {
         return b.priority - a.priority;
       }
-      
-      // En caso de empate, grupos más pequeños primero
       return a.boardingPasses.length - b.boardingPasses.length;
     });
 
-    
-    sortedGroups.forEach((group, index) => {
-      const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
-      const familyStatus = group.hasMinors && group.hasAdults ? ' (FAMILIA)' : '';
-      
-    });
-    
-
     for (const group of sortedGroups) {
-      const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
-    
-      // Validación: menores deben tener adultos
       if (group.hasMinors && !group.hasAdults) {
-       
         continue;
       }
 
@@ -397,7 +452,6 @@ export class AirlinesService {
       );
 
       if (groupAvailableSeats.length < group.boardingPasses.length) {
-      
         continue;
       }
 
@@ -411,8 +465,6 @@ export class AirlinesService {
           processedBoardingPasses.push(bp);
         }
       });
-
-      
     }
 
     return processedBoardingPasses;
@@ -426,7 +478,6 @@ export class AirlinesService {
     const minors = group.passengers.filter(p => this.isMinor(p));
     const adults = group.passengers.filter(p => !this.isMinor(p));
     
-    // Obtener asientos de ventana para menores (especialmente importante en primera clase)
     const windowSeats = this.getWindowSeats(availableSeats, airplane, group.seatType);
     const nonWindowSeats = availableSeats.filter(seat => 
       !this.isWindowSeat(seat, airplane, group.seatType)
@@ -434,29 +485,22 @@ export class AirlinesService {
 
     const assignedSeats: Seat[] = [];
 
-    // PASO 1: Asignar menores a ventanas (prioridad en primera clase)
     minors.forEach((minor, index) => {
       if (index < windowSeats.length) {
         assignedSeats.push(windowSeats[index]);
-        const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
-        
       } else if (nonWindowSeats.length > 0) {
         const seat = nonWindowSeats.shift();
         if (seat) {
           assignedSeats.push(seat);
-          const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
-         
         }
       }
     });
 
-    // PASO 2: Asignar adultos cerca de menores
     const remainingSeats = [
       ...windowSeats.slice(minors.length),
       ...nonWindowSeats
     ];
 
-    // Ordenar por proximidad si hay menores asignados
     if (assignedSeats.length > 0) {
       remainingSeats.sort((a, b) => {
         const minDistanceA = Math.min(...assignedSeats.map(assigned => this.getSeatDistance(a, assigned)));
@@ -468,8 +512,6 @@ export class AirlinesService {
     adults.forEach((adult, index) => {
       if (index < remainingSeats.length) {
         assignedSeats.push(remainingSeats[index]);
-        const seatTypeDisplay = this.normalizeSeatType(group.seatType).toUpperCase();
-        
       }
     });
 
@@ -502,7 +544,7 @@ export class AirlinesService {
       return ['A', 'I'];
     }
     
-    return ['A']; // fallback
+    return ['A'];
   }
 
   private isSeatValidInConfiguration(seat: Seat, airplane: Airplane): boolean {
@@ -550,9 +592,6 @@ export class AirlinesService {
     }
   }
 
-  
-
-  // NUEVO: Resumen mejorado con desglose por clase
   private generateEnhancedAssignmentSummary(groups: SeatAssignmentGroup[], processedBoardingPasses: BoardingPass[]) {
     let minorsWithAdults = 0;
     let firstClassProcessed = 0;
@@ -576,7 +615,6 @@ export class AirlinesService {
           }
           break;
         case 'economypremium':
-          // Se cuenta como business para efectos del resumen
           businessClassProcessed++;
           break;
         case 'economy':
@@ -596,8 +634,6 @@ export class AirlinesService {
       businessClassProcessed,
       economyClassProcessed
     };
-
-
 
     return summary;
   }
