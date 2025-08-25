@@ -27,7 +27,7 @@
 
 ## Project setup
 
-Proyecto realizado para
+Intalacion de dependencia
 
 ```bash
 $ npm install
