@@ -8,7 +8,7 @@ async function bootstrap() {
   app.enableCors({
     origin:  [
     'http://localhost:4200', // local
-    'https://tu-frontend.netlify.app' // producción
+    'https://airlinesgabo.netlify.app' // producción
   ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
     credentials: true,
